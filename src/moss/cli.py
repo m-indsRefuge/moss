@@ -3,15 +3,15 @@
   moss tick    - live one tick (hatches on first run)
   moss status  - look, don't touch
 
-The brain file lives in the CURRENT DIRECTORY: you cd into a repo,
-run `moss tick`, and that repo gets its own pet. (The scaffold's
-.gitignore already excludes moss.state.json - a brain is runtime
-data, not source.) M0 default brain is ReflexBrain: the creature is
-complete with no model at all. The LLM transport and --brain llm
-arrive in the next block and plug into the same tick.
+Brain selection (per tick, not persisted):
+  --brain reflex            the deterministic ladder (default)
+  --brain llm --model M     a real model over Ollama
 
-Corrupt brains are LOUD here too: exit code 1, file untouched. The
-promise made in state.py ends at the keyboard, not before it.
+The brain file lives in the CURRENT DIRECTORY: cd into a repo, run
+`moss tick`, and that repo gets its own pet. With --brain llm and no
+server running, the tick still succeeds via reflexes - and the
+[reflex fallback] marker says so out loud. The pet cannot die
+because its brain is unreachable; it just gets simpler.
 """
 from __future__ import annotations
 
@@ -20,8 +20,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from moss.brain import ReflexBrain
+from moss.brain import LLMBrain, ReflexBrain
 from moss.clock import RealClock
+from moss.llm import DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TEMPERATURE, OllamaLLM
 from moss.senses import GitSenses
 from moss.state import CorruptStateError, load, new_state, save
 from moss.tick import TickResult, tick
@@ -55,7 +56,7 @@ def format_tick(r: TickResult) -> str:
 
 # -- commands ------------------------------------------------------
 
-def cmd_tick() -> int:
+def cmd_tick(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     path = cwd / STATE_FILENAME
     try:
@@ -66,7 +67,15 @@ def cmd_tick() -> int:
     if existing is None:
         existing = new_state("Moss", RealClock().now())
         print(f"{existing['name']} hatches. Commits are food; the repo is home.")
-    result = tick(existing, RealClock(), GitSenses(cwd), ReflexBrain())
+
+    if args.brain == "llm":
+        transport = OllamaLLM(model=args.model, base_url=args.ollama_url,
+                              temperature=args.temperature)
+        brain = LLMBrain(transport)
+    else:
+        brain = ReflexBrain()
+
+    result = tick(existing, RealClock(), GitSenses(cwd), brain)
     save(path, result.state)
     print(format_status(result.state))
     print(format_tick(result))
@@ -95,10 +104,19 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="moss", description="a terminal pet that feeds on your git activity")
     sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("tick", help="live one tick (hatches on first run)")
+
+    p_tick = sub.add_parser("tick", help="live one tick (hatches on first run)")
+    p_tick.add_argument("--brain", choices=["reflex", "llm"], default="reflex")
+    p_tick.add_argument("--model", default=DEFAULT_MODEL)
+    p_tick.add_argument("--ollama-url", default=DEFAULT_BASE_URL)
+    p_tick.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
+
     sub.add_parser("status", help="look, don't touch")
+
     args = p.parse_args(argv)
-    return cmd_tick() if args.command == "tick" else cmd_status()
+    if args.command == "tick":
+        return cmd_tick(args)
+    return cmd_status()
 
 
 if __name__ == "__main__":

@@ -5,7 +5,9 @@
 
 Brain selection (per tick, not persisted):
   --brain reflex            the deterministic ladder (default)
-  --brain llm --model M     a real model over Ollama
+  --brain llm --model M     a real model over Ollama (--timeout for
+                            slow machines: a cold 14B load can take
+                            minutes; the hint on stderr says so)
 
 The brain file lives in the CURRENT DIRECTORY: cd into a repo, run
 `moss tick`, and that repo gets its own pet. With --brain llm and no
@@ -22,7 +24,13 @@ from typing import Any
 
 from moss.brain import LLMBrain, ReflexBrain
 from moss.clock import RealClock
-from moss.llm import DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TEMPERATURE, OllamaLLM
+from moss.llm import (
+    DEFAULT_BASE_URL,
+    DEFAULT_MODEL,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_TIMEOUT_S,
+    OllamaLLM,
+)
 from moss.senses import GitSenses
 from moss.state import CorruptStateError, load, new_state, save
 from moss.tick import TickResult, tick
@@ -69,8 +77,13 @@ def cmd_tick(args: argparse.Namespace) -> int:
         print(f"{existing['name']} hatches. Commits are food; the repo is home.")
 
     if args.brain == "llm":
+        # stderr on purpose: stdout stays parseable; the hint exists
+        # so a slow first load is never mistaken for a hang again
+        print(f"asking {args.model} via Ollama - first call may take "
+              "minutes to load the model", file=sys.stderr)
         transport = OllamaLLM(model=args.model, base_url=args.ollama_url,
-                              temperature=args.temperature)
+                              temperature=args.temperature,
+                              timeout_s=args.timeout)
         brain = LLMBrain(transport)
     else:
         brain = ReflexBrain()
@@ -110,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     p_tick.add_argument("--model", default=DEFAULT_MODEL)
     p_tick.add_argument("--ollama-url", default=DEFAULT_BASE_URL)
     p_tick.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
+    p_tick.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
 
     sub.add_parser("status", help="look, don't touch")
 

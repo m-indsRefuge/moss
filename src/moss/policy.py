@@ -9,9 +9,7 @@ Three things live here:
    The returned reason is not for humans - it is the correction the
    LLM brain will be shown when it proposes something illegal.
 3. fallback - a complete rule-based brain. Moss behaves with no model
-   at all, which makes it the baseline the LLM must beat: if the
-   neural brain's fallback-rate exceeds the reflexes' rate, it is
-   expensive decoration.
+   at all, which makes it the baseline the LLM must beat.
 
 Scene lives here too, though senses.py will produce it: interfaces
 belong to their consumer. Dependency direction stays one-way
@@ -20,6 +18,11 @@ belong to their consumer. Dependency direction stays one-way
 HISTORY: the grid test once caught the snack rung proposing eat with
 a full stomach - preference straying outside permission. Kept here
 as a warning label: the ladder serves is_legal, never the reverse.
+
+FOR RENDERERS (the TUI): KNOWN_MOODS is the complete vocabulary the
+reflex brain emits. The LLM brain may emit ANY mood string (free
+expression, length-capped only) - renderers must fall back
+gracefully on unknown moods. Never treat mood as an enum.
 """
 from __future__ import annotations
 
@@ -29,6 +32,8 @@ from typing import Any
 from moss import physics as ph
 
 ACTIONS = ("eat", "sleep", "play", "sulk")
+
+KNOWN_MOODS = ("content", "sleepy", "playful", "sulky")
 
 
 @dataclass(frozen=True)

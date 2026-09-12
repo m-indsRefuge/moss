@@ -127,9 +127,31 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("status", help="look, don't touch")
 
+    p_home = sub.add_parser("home", help="open Moss's graphical habitat")
+    p_home.add_argument("--brain", choices=["reflex", "llm"], default="reflex")
+    p_home.add_argument("--model", default=DEFAULT_MODEL)
+    p_home.add_argument("--ollama-url", default=DEFAULT_BASE_URL)
+    p_home.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
+    p_home.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
+
     args = p.parse_args(argv)
     if args.command == "tick":
         return cmd_tick(args)
+    if args.command == "home":
+        # Optional GUI dependency: headless commands never import Qt.
+        try:
+            from moss.gui import run_home
+        except ModuleNotFoundError as e:
+            if e.name and e.name.startswith("PySide6"):
+                print('moss home requires PySide6; install moss with the [gui] extra.',
+                      file=sys.stderr)
+                return 1
+            raise
+        from moss.runtime import configured_runtime
+        return run_home(configured_runtime(
+            Path.cwd(), brain=args.brain, model=args.model,
+            ollama_url=args.ollama_url, temperature=args.temperature,
+            timeout=args.timeout))
     return cmd_status()
 
 

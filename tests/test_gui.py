@@ -248,3 +248,63 @@ def test_habitat_button_publishes_saved_outcome_and_disclosures_do_not_tick(app,
         window.hide()
         engine.deleteLater()
         app.processEvents()
+
+
+def test_desktop_reflows_and_keeps_history_and_tick_accessible(app, tmp_path):
+    """Region relationships and reachable content, never pixel comparisons."""
+    runtime = MossRuntime(tmp_path, clock=SimClock(), senses=FixtureSenses([]))
+    seed = new_state("Moss", runtime.clock.now())
+    seed["diary"] = [f"Earlier note {i}. " + "A quiet corner of the repository. " * 5 for i in range(12)]
+    save(runtime.state_path, seed)
+    before = runtime.state_path.read_bytes()
+    bridge = MossBridge(runtime)
+    engine = create_engine(bridge)
+    window = engine.rootObjects()[0]
+    warnings = []
+    engine.warnings.connect(lambda errors: warnings.extend(str(e) for e in errors))
+    try:
+        bridge.open()
+        until(lambda: not bridge.busy)
+        creature = window.findChild(QQuickItem, "creature")
+        garden = window.findChild(QQuickItem, "gardenRegion")
+        notes = window.findChild(QQuickItem, "notesRegion")
+        page = window.findChild(QQuickItem, "habitatScroll")
+        for width, height in ((1020, 800), (1020, 756), (1020, 700), (1280, 960), (540, 700), (899, 760), (900, 760)):
+            window.resize(width, height)
+            QTest.qWait(80)
+            assert window.findChild(QQuickItem, "creature") is creature
+            if window.property("wide"):
+                assert notes.x() >= garden.x() + garden.width()
+                assert notes.y() == garden.y()
+            else:
+                assert notes.y() >= garden.y() + garden.height()
+                assert notes.width() <= page.width()
+            button = window.findChild(QQuickItem, "tickButton")
+            pos = button.mapToScene(QPointF(0, 0))
+            assert pos.x() >= 0 and pos.y() >= 0
+            assert pos.x() + button.width() <= window.width()
+            assert pos.y() + button.height() <= window.height()
+            if window.property("wide"):
+                vitals = window.findChild(QQuickItem, "vitals")
+                bottom = vitals.mapToItem(page, QPointF(0, vitals.height()))
+                assert bottom.y() <= page.height() + 1
+
+        window.resize(540, 700)
+        for name in ("historyButton", "detailsButton"):
+            QMetaObject.invokeMethod(window.findChild(QObject, name), "clicked", Qt.DirectConnection)
+        QTest.qWait(100)
+        page.setProperty("contentY", page.property("contentHeight") - page.height())
+        journal = window.findChild(QQuickItem, "journalScroll")
+        flick = journal.property("contentItem")
+        assert flick.property("contentHeight") > flick.property("height")
+        flick.setProperty("contentY", flick.property("contentHeight") - flick.property("height"))
+        QTest.qWait(80)
+        assert flick.property("atYEnd")
+        assert window.findChild(QObject, "diaryHistory").property("visible")
+        assert not bridge.hasTick and runtime.state_path.read_bytes() == before
+        assert not warnings
+    finally:
+        bridge.finish_shutdown()
+        window.hide()
+        engine.deleteLater()
+        app.processEvents()

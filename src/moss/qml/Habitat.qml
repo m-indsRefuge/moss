@@ -171,27 +171,15 @@ Item {
         visible: !bridge.ready; color: "#9fa892"; font.pixelSize: 13
         text: bridge.busy ? "Opening home…" : "Moss could not be loaded"
     }
-    // Deliberately simple bowl and tokens; their detail pass follows this one.
-    Column {
-        id: bowl
-        x: habitat.width * 0.74; y: habitat.floorY - 17
-        width: 74; spacing: 10
-        Rectangle {
-            width: 65; height: 28; radius: 12; color: "#756046"; border.color: "#98815a"
-            Rectangle { x: 3; y: 2; width: 59; height: 9; radius: 5; color: "#353526" }
-            Row {
-                anchors.horizontalCenter: parent.horizontalCenter; y: 0; spacing: 3
-                Repeater {
-                    model: bridge.ready ? Math.min(bridge.bowl, 5) : 0
-                    Rectangle { width: 7; height: 7; radius: 2; rotation: 20; color: "#c6c48b" }
-                }
-            }
-        }
-        Label {
-            objectName: "bowlLabel"; textFormat: Text.PlainText
-            text: bridge.ready ? bridge.bowl + (bridge.bowl === 1 ? " commit" : " commits") : "—"
-            color: "#b7b69b"; font.pixelSize: 11
-        }
+    FoodBowl {
+        id: foodBowl; objectName: "foodBowl"
+        x: habitat.width * 0.73
+        y: habitat.floorY - height * 0.52
+        width: Math.max(82, Math.min(104, habitat.width * 0.19))
+        height: width * 0.74
+        visible: bridge.ready
+        commitCount: bridge.ready ? bridge.bowl : 0
+        eating: habitat.pose === "eat"
     }
     Frond {
         x: habitat.width * 0.09; y: habitat.floorY - height + 43

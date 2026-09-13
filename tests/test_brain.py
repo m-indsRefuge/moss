@@ -114,6 +114,21 @@ def test_prompt_is_deterministic():
     assert build_prompt(s, DAY) == build_prompt(s, DAY)
 
 
+def test_prompt_contains_compact_diary_voice_guidance():
+    p = build_prompt(make_state(diary=["The repository is being suspiciously sensible."]), DAY)
+    assert "Diary voice:" in p
+    assert "8–24 words" in p
+    assert "dry and observational first" in p
+    assert "Vary sentence structure, verbs, and metaphors" in p
+    assert "do not make every diary entry about food or taste" in p
+    assert "one concrete observation" in p
+    assert "When work categories are mixed" in p
+    assert "Avoid repeating wording, jokes" in p
+    assert "or wishes" in p
+    assert "never invent dates, tools, causes" in p
+    assert "The repository is being suspiciously sensible." in p
+
+
 # -- the decide loop: nudge, veto, degrade ------------------------
 
 def test_brain_happy_path():

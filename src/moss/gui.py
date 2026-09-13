@@ -57,10 +57,26 @@ class MossBridge(QObject):
     lastTick = _field("last_tick", str, "", stateChanged)
     brainStatus = _field("brain_status", str, "Not run this visit", stateChanged)
     repoStatus = _field("repo_status", str, "Not sensed this visit", stateChanged)
+    commitsEaten = _field("commits_eaten", int, 0, stateChanged)
+    sulks = _field("sulks", int, 0, stateChanged)
+    longestNeglectDays = _field("longest_neglect_days", int, 0, stateChanged)
+    hasTick = _field("has_tick", bool, False, stateChanged)
+    commitsArrived = _field("commits_arrived", int, 0, stateChanged)
+    commitsEatenThisTick = _field("commits_eaten_this_tick", int, 0, stateChanged)
+    decisionAttempts = _field("decision_attempts", int, 0, stateChanged)
+    usedFallback = _field("used_fallback", bool, False, stateChanged)
+    hoursQuiet = _field("hours_quiet", float, 0.0, stateChanged)
+    isNight = _field("is_night", bool, False, stateChanged)
+    lastCommitAt = _field("last_commit_at", str, "", stateChanged)
 
     @Property(str, notify=stateChanged)
     def diary(self):
         return "\n\n".join(self._snapshot.diary) if self._snapshot else ""
+
+    @Property("QStringList", notify=stateChanged)
+    def diaryEntries(self):
+        # Detached newest-first presentation; QML cannot edit the snapshot.
+        return list(reversed(self._snapshot.diary)) if self._snapshot else []
 
     def __init__(self, runtime: MossRuntime):
         super().__init__()
@@ -74,6 +90,18 @@ class MossBridge(QObject):
     @Property(str, constant=True)
     def repoPath(self):
         return str(self._runtime.repo)
+
+    @Property(str, constant=True)
+    def repoName(self):
+        return self._runtime.repo.name or str(self._runtime.repo)
+
+    @Property(str, constant=True)
+    def brainLabel(self):
+        return self._runtime.brain_label
+
+    @Property(str, constant=True)
+    def statePath(self):
+        return str(self._runtime.state_path)
 
     @Property(bool, notify=activityChanged)
     def busy(self):
@@ -97,7 +125,9 @@ class MossBridge(QObject):
             return "Finishing this operation before closing…"
         if self.busy:
             return "Sensing Git and consulting the brain…" if self._is_tick else "Opening Moss’s home…"
-        return "State saved. Ticks happen only when you ask." if self.ready else "Moss has not loaded."
+        if self._error:
+            return "Showing the last confirmed state." if self.ready else "Moss could not be opened."
+        return "Ready when you are. Ticks happen only when you ask." if self.ready else "Moss has not loaded."
 
     @Slot()
     def open(self):

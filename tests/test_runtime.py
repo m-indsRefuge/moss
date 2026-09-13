@@ -121,3 +121,38 @@ def test_transactions_are_serialized_and_second_load_sees_first_save(tmp_path):
         assert len(first.result().diary) == 1
         assert len(second.result().diary) == 2
     assert len(load(service.state_path)["diary"]) == 2
+
+
+def test_habitat_projection_distinguishes_lifetime_from_this_visit(tmp_path):
+    service = runtime(tmp_path)
+    state = new_state("Moss", service.clock.now())
+    state["stats"].update(commits_eaten=12, sulks=3, longest_neglect_days=8)
+    save(service.state_path, state)
+    opened = service.open()
+    assert (opened.commits_eaten, opened.sulks, opened.longest_neglect_days) == (12, 3, 8)
+    assert not opened.has_tick and opened.last_commit_at == ""
+    assert opened.decision_attempts == 0 and not opened.used_fallback
+    assert service.brain_label == "Reflex"
+
+
+def test_habitat_telemetry_comes_from_completed_core_tick(tmp_path):
+    clock = SimClock()
+    service = MossRuntime(tmp_path, clock=clock, senses=FixtureSenses([{"new_commits": 3}]),
+                          brain=LLMBrain(StubLLM([])))
+    result = service.live_tick()
+    assert result.has_tick and result.commits_arrived == result.commits_eaten_this_tick == 3
+    assert result.commits_eaten == 3 and result.sulks == 0
+    assert result.decision_attempts == 2 and result.used_fallback
+    assert result.last_commit_at == clock.now().isoformat()
+    assert result.hours_quiet == 0 and not result.is_night
+    reopened = runtime(tmp_path).open()
+    assert reopened.commits_eaten == 3 and not reopened.has_tick
+    assert reopened.commits_arrived == 0 and reopened.last_commit_at == ""
+
+
+def test_ambiguous_git_observation_does_not_claim_a_last_commit(tmp_path):
+    from moss.senses import GitSenses
+    (tmp_path / ".git").write_text("gitdir: nowhere\n", encoding="utf-8")
+    result = MossRuntime(tmp_path, clock=SimClock(), senses=GitSenses(tmp_path)).live_tick()
+    assert result.has_tick and result.last_commit_at == ""
+    assert result.repo_status == "Git unavailable or empty history"

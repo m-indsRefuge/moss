@@ -9,9 +9,11 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 import pytest
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QEventLoop, QObject, QTimer
+from PySide6.QtCore import QEventLoop, QMetaObject, QObject, QPointF, QTimer, Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtTest import QSignalSpy
+from PySide6.QtQml import QQmlExpression
+from PySide6.QtQuick import QQuickItem, QQuickWindow
+from PySide6.QtTest import QSignalSpy, QTest
 
 from moss.brain import LLMBrain, ReflexBrain
 from moss.clock import RealClock, SimClock
@@ -88,6 +90,7 @@ def test_worker_keeps_event_loop_live_rejects_overlap_and_defers_close(app, tmp_
     assert closed.count() == 1 and changes.count() == 2 and actions.count() == 1
     assert all(thread != get_ident() for thread in worker_threads)
     assert bridge.brainStatus == "Reflex fallback"
+    assert bridge.hasTick and bridge.usedFallback and bridge.decisionAttempts == 2
     assert len(observed_disk[-1]["diary"]) == 1
     assert bridge.diary == observed_disk[-1]["diary"][0]
     assert bridge.action == actions.at(0)[0] == "play"
@@ -110,6 +113,9 @@ def test_failure_preserves_last_snapshot_and_emits_no_action(app, tmp_path, monk
         until(lambda: not bridge.busy)
     assert "OSError" in bridge.error and "private" not in bridge.error
     assert not bridge.diary and bridge.action == "idle"
+    assert not bridge.hasTick and bridge.decisionAttempts == 0
+    assert bridge.commitsEaten == 0 and bridge.lastCommitAt == ""
+    assert bridge.activity == "Showing the last confirmed state."
     assert changed.count() == actions.count() == 0
     assert runtime.state_path.read_bytes() == before
     bridge.requestTick()
@@ -170,3 +176,75 @@ def test_real_git_tick_runs_in_worker_and_persists_meal(app, tmp_path):
     state = load(tmp_path / "moss.state.json")
     assert state["stats"]["commits_eaten"] == 1 and state["bowl"]["commits"] == 0
     assert bridge.lastTick == state["last_tick"]
+
+
+def test_habitat_button_publishes_saved_outcome_and_disclosures_do_not_tick(app, tmp_path, monkeypatch):
+    class Personality:
+        calls = 0
+
+        def complete(self, prompt):
+            self.calls += 1
+            return ("THOUGHT: A little meal.\nACTION: eat\nMOOD: content\n"
+                    "DIARY: <b>I ate two commits.</b>\nWISH: more leaves")
+
+    brain = Personality()
+    runtime = MossRuntime(tmp_path, clock=SimClock(),
+                          senses=FixtureSenses([{"new_commits": 2}]), brain=LLMBrain(brain))
+    seed = new_state("Moss", runtime.clock.now())
+    seed["diary"] = ["My older note."]
+    save(runtime.state_path, seed)
+    bridge = MossBridge(runtime)
+    engine = create_engine(bridge)
+    window = engine.rootObjects()[0]
+    warnings = []
+    engine.warnings.connect(lambda errors: warnings.extend(str(e) for e in errors))
+    try:
+        bridge.open()
+        until(lambda: not bridge.busy)
+        assert not bridge.hasTick and not brain.calls
+        window.resize(540, 700)
+        QTest.qWait(100)
+        button = window.findChild(QQuickItem, "tickButton")
+        point = button.mapToScene(QPointF(button.width() / 2, button.height() / 2)).toPoint()
+        assert 0 < point.x() < window.width() and 0 < point.y() < window.height()
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+        until(lambda: bridge.hasTick and not bridge.busy)
+        saved = load(runtime.state_path)
+        assert brain.calls == 1 and bridge.decisionAttempts == 1 and not bridge.usedFallback
+        assert bridge.commitsArrived == bridge.commitsEatenThisTick == bridge.commitsEaten == 2
+        assert bridge.commitsEaten == saved["stats"]["commits_eaten"]
+        latest = window.findChild(QObject, "latestDiary")
+        assert latest.property("text") == saved["diary"][-1] == "<b>I ate two commits.</b>"
+        plain = QQmlExpression(engine.contextForObject(latest), latest, "textFormat === 0")
+        assert plain.evaluate()[0] is True  # Model markup stays literal.
+        assert window.findChild(QObject, "mealSummary").property("text") == "Last tick · 2 arrived in the bowl · 2 eaten"
+        assert window.findChild(QObject, "bowlLabel").property("text") == "0 commits"
+        assert window.findChild(QObject, "thoughtLabel").property("text") == "A little meal."
+        detached = bridge.diaryEntries
+        detached.clear()
+        assert bridge.diaryEntries == list(reversed(saved["diary"]))
+        before = runtime.state_path.read_bytes()
+        # Disclosure signals exercise their QML handlers; they are presentation-only.
+        for name in ("historyButton", "detailsButton"):
+            assert QMetaObject.invokeMethod(window.findChild(QObject, name), "clicked", Qt.DirectConnection)
+        assert window.property("historyOpen") and window.property("detailsOpen")
+        assert window.findChild(QObject, "habitatDetails").property("visible")
+        until(lambda: window.findChild(QObject, "creature").property("state") == "idle", timeout=5500)
+        assert brain.calls == 1 and runtime.state_path.read_bytes() == before
+
+        # A later failed save retains the completed tick's entire visible projection.
+        confirmed = bridge._snapshot
+        def failed_save(*args):
+            raise OSError("blocked")
+        monkeypatch.setattr("moss.runtime.save", failed_save)
+        bridge.requestTick()
+        until(lambda: not bridge.busy)
+        assert bridge.error and bridge._snapshot is confirmed
+        assert latest.property("text") == saved["diary"][-1]
+        assert bridge.commitsArrived == 2 and runtime.state_path.read_bytes() == before
+        assert not warnings
+    finally:
+        bridge.finish_shutdown()
+        window.hide()
+        engine.deleteLater()
+        app.processEvents()

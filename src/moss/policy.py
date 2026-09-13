@@ -44,6 +44,7 @@ class Scene:
     new_commits: int = 0
     hours_quiet: float = 0.0
     is_night: bool = False
+    repo_digest: Any = None
 
 
 @dataclass(frozen=True)

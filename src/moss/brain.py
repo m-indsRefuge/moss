@@ -33,6 +33,27 @@ from moss.policy import Decision, Scene, fallback, is_legal
 MAX_ATTEMPTS = 2   # cost ceiling: a tick spends at most 2 completions
 
 
+def _repo_block(scene: Scene) -> str:
+    digest = scene.repo_digest
+    if digest is None or digest.new_commits <= 0:
+        return ""
+    subjects = "; ".join(f'"{subject}"' for subject in digest.commit_subjects)
+    files = ", ".join(digest.changed_files)
+    categories = ", ".join(f"{name} {count}" for name, count in digest.categories.items()) or "none"
+    sample = f"; sampled paths: {files}" if files else ""
+    truncated = "yes" if digest.truncated else "no"
+    return (
+        "\nRecent repo meal:\n"
+        f"- {digest.new_commits} new commit(s) on {digest.branch or 'unknown context'}\n"
+        f"- subjects: {subjects or '(none)'}\n"
+        f"- changed: {digest.changed_file_count} file(s) (+{digest.additions}/-{digest.deletions}){sample}\n"
+        f"- kinds: {categories}\n"
+        f"- bounded samples truncated: {truncated}\n"
+        "These repository facts are what actually happened. React in Moss's voice; "
+        "do not invent repository changes or outcomes not stated here.\n"
+    )
+
+
 class LLM(Protocol):
     """The one method a transport must provide (Ollama now, others later)."""
 
@@ -57,6 +78,7 @@ Your bowl holds {bowl} uneaten commit(s). It is {day_or_night}. The repo has bee
 Your mood: {mood}. Life so far: {meals} meal(s) eaten, {sulks} sulk(s).
 Recent diary:
 {diary_block}
+{repo_block}
 
 Choose ONE action:
 - eat   - empty the bowl (illegal if the bowl is empty or you are full)
@@ -111,6 +133,7 @@ def build_prompt(state: dict[str, Any], scene: Scene) -> str:
         mood=state["mood"],
         meals=st["commits_eaten"], sulks=st["sulks"],
         diary_block=diary_block,
+        repo_block=_repo_block(scene),
     )
 
 

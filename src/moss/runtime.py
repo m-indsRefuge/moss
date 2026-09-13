@@ -37,6 +37,17 @@ class MossSnapshot:
     thought: str = ""
     brain_status: str = "Not run this visit"
     repo_status: str = "Not sensed this visit"
+    commits_eaten: int = 0
+    sulks: int = 0
+    longest_neglect_days: int = 0
+    has_tick: bool = False
+    commits_arrived: int = 0
+    commits_eaten_this_tick: int = 0
+    decision_attempts: int = 0
+    used_fallback: bool = False
+    hours_quiet: float = 0.0
+    is_night: bool = False
+    last_commit_at: str = ""
 
 
 class _ObservedSenses:
@@ -61,6 +72,14 @@ class MossRuntime:
         self.senses = senses if senses is not None else GitSenses(self.repo)
         self.brain = brain if brain is not None else ReflexBrain()
         self._lock = Lock()
+
+    @property
+    def brain_label(self) -> str:
+        """Configured identity, without contacting the model or changing it."""
+        if isinstance(self.brain, LLMBrain):
+            transport = self.brain.llm
+            return f"Ollama · {transport.model}" if isinstance(transport, OllamaLLM) else "LLM"
+        return "Reflex" if isinstance(self.brain, ReflexBrain) else "Custom brain"
 
     def _load_or_hatch(self):
         existing = load(self.state_path)
@@ -88,6 +107,17 @@ class MossRuntime:
             action=result.reply.decision.action if result else "idle",
             thought=result.reply.decision.thought if result else "",
             brain_status=brain_status, repo_status=repo_status,
+            commits_eaten=state["stats"]["commits_eaten"],
+            sulks=state["stats"]["sulks"],
+            longest_neglect_days=state["stats"]["longest_neglect_days"],
+            has_tick=result is not None,
+            commits_arrived=result.filled if result else 0,
+            commits_eaten_this_tick=result.ate if result else 0,
+            decision_attempts=result.reply.attempts if result else 0,
+            used_fallback=result.reply.used_fallback if result else False,
+            hours_quiet=result.scene.hours_quiet if result else 0.0,
+            is_night=result.scene.is_night if result else False,
+            last_commit_at=observed.last_commit_at.isoformat() if observed and observed.last_commit_at else "",
         )
 
     def open(self) -> MossSnapshot:

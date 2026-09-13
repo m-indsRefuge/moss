@@ -24,16 +24,123 @@ trust. One subprocess call, two facts: last_commit_at + new_commits.
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Protocol
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping, Protocol
 
 from moss import physics as ph
 from moss.policy import Scene
 from moss.state import StateError, parse_ts
 
 GIT_TIMEOUT_S = 10.0
+MAX_COMMIT_SUBJECTS = 5
+MAX_CHANGED_FILES = 20
+MAX_COMMIT_SUBJECT_LENGTH = 120
+MAX_CHANGED_PATH_LENGTH = 160
+_HASH = re.compile(r"^[0-9a-f]{40}$")
+_CATEGORY_ORDER = ("tests", "python", "qml", "docs", "config", "assets", "other")
+
+
+@dataclass(frozen=True)
+class RepoDigest:
+    """Small, immutable facts about the commits delivered by one observation."""
+
+    branch: str = ""
+    new_commits: int = 0
+    commit_subjects: tuple[str, ...] = ()
+    changed_files: tuple[str, ...] = ()
+    changed_file_count: int = 0
+    additions: int = 0
+    deletions: int = 0
+    categories: Mapping[str, int] = field(default_factory=dict)
+    truncated: bool = False
+
+    def __post_init__(self) -> None:
+        normalized = {name: int(self.categories.get(name, 0))
+                      for name in _CATEGORY_ORDER if int(self.categories.get(name, 0)) > 0}
+        object.__setattr__(self, "categories", MappingProxyType(normalized))
+
+
+def _category(path: str) -> str:
+    """Classify one path once, with tests taking precedence over extensions."""
+    normalized = path.replace("\\", "/").lower()
+    name = normalized.rsplit("/", 1)[-1]
+    if normalized.startswith("tests/") or "/tests/" in normalized or name.startswith("test_") or name.endswith("_test.py"):
+        return "tests"
+    if normalized.endswith(".py"):
+        return "python"
+    if normalized.endswith(".qml"):
+        return "qml"
+    if normalized.startswith("docs/") or "/docs/" in normalized or normalized.endswith((".md", ".rst", ".txt")):
+        return "docs"
+    if name in {"pyproject.toml", "setup.cfg", "setup.py", "tox.ini", "package.json", "package-lock.json"} or normalized.endswith((".toml", ".ini", ".cfg", ".yaml", ".yml", ".json")):
+        return "config"
+    if normalized.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".wav", ".mp3")):
+        return "assets"
+    return "other"
+
+
+def _bounded_digest(branch: str, records: list[tuple[datetime, str, list[tuple[int | None, int | None, str]]]]) -> RepoDigest | None:
+    if not records:
+        return None
+    subjects = []
+    paths: list[str] = []
+    seen_paths: set[str] = set()
+    categories: dict[str, int] = {name: 0 for name in _CATEGORY_ORDER}
+    additions = deletions = 0
+    truncated = len(records) > MAX_COMMIT_SUBJECTS
+    for _date, subject, stats in records:
+        if len(subject) > MAX_COMMIT_SUBJECT_LENGTH:
+            truncated = True
+        if len(subjects) < MAX_COMMIT_SUBJECTS:
+            subjects.append(subject[:MAX_COMMIT_SUBJECT_LENGTH])
+        for added, removed, path in stats:
+            additions += added or 0
+            deletions += removed or 0
+            if path not in seen_paths:
+                seen_paths.add(path)
+                categories[_category(path)] += 1
+                if len(paths) < MAX_CHANGED_FILES:
+                    if len(path) > MAX_CHANGED_PATH_LENGTH:
+                        truncated = True
+                    paths.append(path[:MAX_CHANGED_PATH_LENGTH])
+                else:
+                    truncated = True
+    return RepoDigest(branch=branch, new_commits=len(records),
+                      commit_subjects=tuple(subjects), changed_files=tuple(paths),
+                      changed_file_count=len(seen_paths), additions=additions,
+                      deletions=deletions, categories=categories,
+                      truncated=truncated)
+
+
+def _fixture_digest(step: Mapping[str, Any], new_commits: int) -> RepoDigest | None:
+    if new_commits <= 0:
+        return None
+    subjects = [str(value) for value in step.get("commit_subjects", [])][:new_commits]
+    raw_paths = [str(value) for value in step.get("changed_files", [])]
+    unique_paths = list(dict.fromkeys(raw_paths))
+    truncated = len(subjects) > MAX_COMMIT_SUBJECTS or len(unique_paths) > MAX_CHANGED_FILES
+    bounded_subjects = []
+    for subject in subjects[:MAX_COMMIT_SUBJECTS]:
+        truncated = truncated or len(subject) > MAX_COMMIT_SUBJECT_LENGTH
+        bounded_subjects.append(subject[:MAX_COMMIT_SUBJECT_LENGTH])
+    bounded_paths = []
+    for path in unique_paths[:MAX_CHANGED_FILES]:
+        truncated = truncated or len(path) > MAX_CHANGED_PATH_LENGTH
+        bounded_paths.append(path[:MAX_CHANGED_PATH_LENGTH])
+    categories = {name: 0 for name in _CATEGORY_ORDER}
+    for path in unique_paths:
+        categories[_category(path)] += 1
+    return RepoDigest(
+        branch=str(step.get("branch", "fixture")), new_commits=new_commits,
+        commit_subjects=tuple(bounded_subjects), changed_files=tuple(bounded_paths),
+        changed_file_count=len(unique_paths), additions=max(0, int(step.get("additions", 0))),
+        deletions=max(0, int(step.get("deletions", 0))), categories=categories,
+        truncated=truncated,
+    )
 
 
 @dataclass(frozen=True)
@@ -42,6 +149,7 @@ class Observation:
 
     new_commits: int
     last_commit_at: datetime | None   # None = never fed / unreadable repo
+    repo_digest: RepoDigest | None = None
 
 
 class Senses(Protocol):
@@ -64,6 +172,7 @@ def make_scene(obs: Observation, last_tick: datetime, now: datetime) -> Scene:
         new_commits=max(0, obs.new_commits),
         hours_quiet=hours_quiet,
         is_night=ph.is_night(now.hour),
+        repo_digest=obs.repo_digest,
     )
 
 
@@ -73,37 +182,74 @@ class GitSenses:
     def __init__(self, repo: Path) -> None:
         self.repo = Path(repo)
 
-    def _commit_dates(self) -> list[datetime] | None:
+    def _branch(self) -> str:
         try:
             proc = subprocess.run(
-                ["git", "-C", str(self.repo), "log", "--pretty=%cI"],
+                ["git", "-C", str(self.repo), "symbolic-ref", "--short", "-q", "HEAD"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S,
+            )
+            branch = proc.stdout.strip()
+            if proc.returncode == 0 and branch:
+                return branch
+            proc = subprocess.run(
+                ["git", "-C", str(self.repo), "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S,
+            )
+            head = proc.stdout.strip()
+            return f"detached@{head}" if proc.returncode == 0 and head else ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    def _history(self) -> tuple[list[tuple[datetime, str, list[tuple[int | None, int | None, str]]]], datetime | None] | None:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(self.repo), "log", "--format=%H%x00%cI%x00%s%x00",
+                 "--numstat", "-z", "--no-renames"],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=GIT_TIMEOUT_S,
             )
         except (OSError, subprocess.SubprocessError):
-            return None   # git missing, hung, or exploded: unreadable
+            return None
         if proc.returncode != 0:
-            return None   # not a repo / no commits yet: unreadable
-        dates: list[datetime] = []
-        for line in proc.stdout.splitlines():
-            line = line.strip()
-            if not line:
+            return None
+        records = []
+        current = None
+        tokens = proc.stdout.split("\x00")
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if _HASH.fullmatch(token) and i + 2 < len(tokens):
+                try:
+                    date = parse_ts(tokens[i + 1])
+                except StateError:
+                    i += 1
+                    continue
+                if current is not None:
+                    records.append(current)
+                current = [date, tokens[i + 2], []]
+                i += 3
                 continue
-            try:
-                dates.append(parse_ts(line))
-            except StateError:
-                continue   # one weird line never blinds the senses
-        return dates
+            if current is not None and token:
+                token = token.lstrip("\r\n")
+                fields = token.split("\t", 2)
+                if len(fields) == 3:
+                    added = int(fields[0]) if fields[0].isdigit() else None
+                    removed = int(fields[1]) if fields[1].isdigit() else None
+                    current[2].append((added, removed, fields[2]))
+            i += 1
+        if current is not None:
+            records.append(current)
+        return records, (records[0][0] if records else None)
 
     def observe(self, now: datetime, last_tick: datetime) -> Observation:
-        dates = self._commit_dates()
-        if dates is None:
+        history = self._history()
+        if history is None:
             return Observation(new_commits=0, last_commit_at=None)
-        # git lists newest first; strict '>' counts commits that
-        # arrived after the last tick closed.
+        records, newest = history
+        fresh = [record for record in records if record[0] > last_tick]
         return Observation(
-            new_commits=sum(1 for d in dates if d > last_tick),
-            last_commit_at=dates[0] if dates else None,
+            new_commits=len(fresh), last_commit_at=newest,
+            repo_digest=_bounded_digest(self._branch(), fresh),
         )
 
 
@@ -128,4 +274,6 @@ class FixtureSenses:
         new_commits = max(0, int(step.get("new_commits", 0)))
         if new_commits > 0:
             self._last_food = now
-        return Observation(new_commits=new_commits, last_commit_at=self._last_food)
+        digest = _fixture_digest(step, new_commits)
+        return Observation(new_commits=new_commits, last_commit_at=self._last_food,
+                           repo_digest=digest)

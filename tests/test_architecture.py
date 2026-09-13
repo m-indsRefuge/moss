@@ -5,18 +5,6 @@
    refactor, or a well-meaning AI contributor cannot scatter git
    calls, HTTP, or disk writes across the codebase without the gate
    going red. The one-owner map IS the architecture.
-
-These are substring tripwires aimed at ACCIDENTS, not adversaries:
-they catch a well-meaning `import subprocess` drifting into brain.py,
-not deliberate evasion. Mechanism strings are chosen to match real
-calls - "json.dump(" is paren-qualified so llm.py's json.dumps(
-payload serialization (string out, no file handle) stays legal while
-state.py's file-writing json.dump( remains the monopoly.
-
-HISTORY: this test once failed on its own author - "json.dump"
-substring-matched llm.py's innocent json.dumps. Kept as a warning:
-tripwires need testing too, and the first thing they catch is often
-the person who set them.
 """
 from pathlib import Path
 

@@ -27,11 +27,11 @@ def test_decision_fields():
 
 
 def test_scene_fields():
-    assert _fields(policy.Scene) == ["new_commits", "hours_quiet", "is_night"]
+    assert _fields(policy.Scene) == ["new_commits", "hours_quiet", "is_night", "repo_digest"]
 
 
 def test_observation_fields():
-    assert _fields(senses.Observation) == ["new_commits", "last_commit_at"]
+    assert _fields(senses.Observation) == ["new_commits", "last_commit_at", "repo_digest"]
 
 
 def test_brain_reply_fields():

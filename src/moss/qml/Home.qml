@@ -163,13 +163,16 @@ ApplicationWindow {
                     width: home.wide ? regions.width - x : regions.width
                     height: home.wide ? regions.height : 400
 
-                    // The record shares the enclosure's light and recedes at its foot.
+                    // A quiet archival page: tactile enough to belong to the habitat,
+                    // restrained enough that Moss remains the dominant focal point.
                     Rectangle {
-                        anchors.fill: parent; radius: 3
+                        id: journalPage; objectName: "journalPage"
+                        anchors.fill: parent; radius: 4
+                        border.width: 1; border.color: "#24372b"
                         gradient: Gradient {
-                            GradientStop { position: 0; color: "#b31e2c21" }
-                            GradientStop { position: 0.55; color: "#661b291f" }
-                            GradientStop { position: 1; color: "#0019251d" }
+                            GradientStop { position: 0; color: "#c31e2c21" }
+                            GradientStop { position: 0.52; color: "#721b291f" }
+                            GradientStop { position: 1; color: "#1219251d" }
                         }
                     }
                     Rectangle {
@@ -183,53 +186,117 @@ ApplicationWindow {
                     }
                     ScrollView {
                         id: journalScroll; objectName: "journalScroll"
-                        anchors.fill: parent; anchors.margins: 24
+                        anchors.fill: parent; anchors.margins: home.wide ? 26 : 22
                         contentWidth: availableWidth; clip: true
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                         ColumnLayout {
                             id: journal
                             width: journalScroll.availableWidth
-                            spacing: 20
-                            Eyebrow { text: "FIELD NOTES" }
-                            Small { text: "A small life, recorded."; color: "#919d88"; font.italic: true }
-                            Copy {
-                                id: latest; objectName: "latestDiary"
-                                Layout.fillWidth: true; Layout.topMargin: 6
-                                font.family: "Georgia"; font.pixelSize: home.wide ? 25 : 23
-                                lineHeight: 1.27; color: "#e0dfc9"
-                                text: bridge.diaryEntries.length ? bridge.diaryEntries[0] : (bridge.ready ? "The first page is still waiting." : "")
+                            spacing: 0
+
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 12
+                                Eyebrow { text: "FIELD NOTES"; color: "#b0b896" }
+                                Rectangle {
+                                    Layout.fillWidth: true; Layout.alignment: Qt.AlignVCenter
+                                    height: 1; color: "#2e402f"; opacity: 0.8
+                                }
                             }
                             Small {
-                                objectName: "thoughtLabel"; Layout.fillWidth: true
-                                text: bridge.thought; visible: text.length > 0
-                                font.italic: true; lineHeight: 1.25
+                                Layout.topMargin: 7
+                                text: "A small life, recorded."; color: "#8f9b86"; font.italic: true
                             }
-                            Rectangle { Layout.fillWidth: true; Layout.topMargin: 8; height: 1; color: "#35402e" }
+
+                            ColumnLayout {
+                                id: journalEntry; objectName: "journalEntry"
+                                Layout.fillWidth: true; Layout.topMargin: 24
+                                spacing: 12
+                                Eyebrow {
+                                    text: "LATEST OBSERVATION"
+                                    font.pixelSize: 8; font.letterSpacing: 1.6; color: "#7f8e78"
+                                }
+                                Copy {
+                                    id: latest; objectName: "latestDiary"
+                                    Layout.fillWidth: true
+                                    font.family: "Georgia"; font.pixelSize: home.wide ? 25 : 23
+                                    lineHeight: 1.3; color: "#e4e1ca"
+                                    text: bridge.diaryEntries.length ? bridge.diaryEntries[0] : (bridge.ready ? "The first page is still waiting." : "")
+                                }
+                            }
+
+                            RowLayout {
+                                id: journalAnnotation; objectName: "journalAnnotation"
+                                Layout.fillWidth: true; Layout.topMargin: 19
+                                visible: bridge.thought.length > 0
+                                spacing: 12
+                                Rectangle {
+                                    Layout.preferredWidth: 2; Layout.preferredHeight: 34
+                                    Layout.alignment: Qt.AlignTop
+                                    radius: 1; color: "#58664c"; opacity: 0.65
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 5
+                                    Eyebrow {
+                                        text: "MARGIN NOTE"
+                                        font.pixelSize: 7; font.letterSpacing: 1.5; color: "#75836f"
+                                    }
+                                    Small {
+                                        objectName: "thoughtLabel"; Layout.fillWidth: true
+                                        text: bridge.thought
+                                        font.italic: true; lineHeight: 1.28; color: "#9daa92"
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true; Layout.topMargin: 22
+                                height: 1; color: "#30412f"; opacity: 0.85
+                            }
                             QuietButton {
                                 objectName: "historyButton"; visible: bridge.diaryEntries.length > 1
-                                Layout.leftMargin: -8
-                                text: home.historyOpen ? "Close earlier notes" : "Earlier notes (" + (bridge.diaryEntries.length - 1) + ")"
+                                Layout.leftMargin: -8; Layout.topMargin: 5
+                                text: home.historyOpen ? "Close earlier field notes" : "Earlier field notes (" + (bridge.diaryEntries.length - 1) + ")"
                                 onClicked: home.historyOpen = !home.historyOpen
                             }
                             ColumnLayout {
                                 objectName: "diaryHistory"; Layout.fillWidth: true
+                                Layout.topMargin: 8
                                 visible: home.historyOpen && bridge.diaryEntries.length > 1; spacing: 22
                                 Repeater {
                                     model: bridge.diaryEntries.slice(1)
-                                    Copy { required property string modelData; Layout.fillWidth: true; text: modelData; font.pixelSize: 14; color: "#a4b096"; lineHeight: 1.35 }
+                                    Copy {
+                                        required property string modelData
+                                        Layout.fillWidth: true; text: modelData
+                                        font.family: "Georgia"; font.pixelSize: 14
+                                        color: "#9fab91"; lineHeight: 1.4
+                                    }
                                 }
                             }
-                            Small {
-                                objectName: "lifetimeSummary"; Layout.fillWidth: true; visible: bridge.ready
-                                text: "Life here · " + bridge.commitsEaten + " commits eaten · " + bridge.sulks + " sulks · longest quiet spell " + bridge.longestNeglectDays + " days"
-                                font.pixelSize: 11; lineHeight: 1.35; color: "#95a087"
+
+                            ColumnLayout {
+                                id: journalArchiveMeta; objectName: "journalArchiveMeta"
+                                Layout.fillWidth: true; Layout.topMargin: 22
+                                spacing: 7
+                                Rectangle {
+                                    Layout.fillWidth: true; height: 1
+                                    color: "#2a392b"; opacity: 0.75
+                                }
+                                Small {
+                                    objectName: "lifetimeSummary"; Layout.fillWidth: true; visible: bridge.ready
+                                    text: "Life here · " + bridge.commitsEaten + " commits eaten · " + bridge.sulks + " sulks · longest quiet spell " + bridge.longestNeglectDays + " days"
+                                    font.pixelSize: 10; lineHeight: 1.35; color: "#84917c"
+                                }
+                                Small {
+                                    objectName: "mealSummary"; Layout.fillWidth: true; visible: bridge.hasTick
+                                    text: "Last tick · " + bridge.commitsArrived + " arrived in the bowl · " + bridge.commitsEatenThisTick + " eaten"
+                                    font.pixelSize: 10; lineHeight: 1.3; color: "#8b9882"
+                                }
+                                Eyebrow {
+                                    Layout.topMargin: 11
+                                    text: "COMMITS ARE FOOD"
+                                    font.pixelSize: 8; font.letterSpacing: 1.7; color: "#77866e"
+                                }
                             }
-                            Small {
-                                objectName: "mealSummary"; Layout.fillWidth: true; visible: bridge.hasTick
-                                text: "Last tick · " + bridge.commitsArrived + " arrived in the bowl · " + bridge.commitsEatenThisTick + " eaten"
-                                font.pixelSize: 11; lineHeight: 1.3
-                            }
-                            Eyebrow { Layout.topMargin: 16; text: "COMMITS ARE FOOD"; font.pixelSize: 8; font.letterSpacing: 1.7; color: "#889574" }
                         }
                     }
                 }

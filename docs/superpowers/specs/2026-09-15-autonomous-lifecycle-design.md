@@ -56,10 +56,10 @@ Its only responsibility is to produce bounded delays.
 
 The cadence policy exposes two delay classes:
 
-- **Wake delay:** 30 to 90 seconds after a successful application open.
-- **Steady delay:** 6 to 14 minutes after each completed life tick.
+- **Wake delay:** uniformly random from 30 to 90 seconds after a successful application open.
+- **Steady delay:** triangularly distributed from 6 to 14 minutes, with a 10-minute mode, after each completed life tick.
 
-Steady delays are center-weighted rather than uniformly distributed. Python's triangular distribution is an appropriate implementation because it keeps hard minimum and maximum bounds while favoring values near the middle of the range.
+The steady cadence is therefore center-weighted rather than uniformly distributed. Python's triangular distribution is an appropriate implementation because it keeps hard minimum and maximum bounds while favoring values near the 10-minute center.
 
 The random source must be injectable. Production may use a normal pseudo-random generator; tests must be able to supply a deterministic or scripted source so scheduling behavior is reproducible.
 
@@ -106,10 +106,9 @@ TICKING
   | success or failure
   v
 AWAKE_WAITING
-  | close request
-  v
-CLOSING
 ```
+
+A close request may occur from **OPENING**, **AWAKE_WAITING**, or **TICKING**. It immediately moves the session into closing behavior: pending timers are invalidated, no future lifecycle work may be scheduled, and any one already-running worker operation is allowed to finish under the existing shutdown contract.
 
 These states may be represented explicitly or through existing bridge state plus clear lifecycle guards, but the observable behavior must match this state machine.
 
@@ -119,15 +118,17 @@ These states may be represented explicitly or through existing bridge state plus
 2. `bridge.open()` loads or hatches Moss using the existing worker transaction.
 3. Opening alone must not perform a life tick.
 4. If opening succeeds and the bridge has a confirmed snapshot, Moss becomes ready.
-5. Only after readiness is confirmed, schedule one wake timer for a random delay between 30 and 90 seconds.
+5. Only after readiness is confirmed, schedule one wake timer for a uniformly random delay between 30 and 90 seconds.
 6. When that timer expires, start exactly one autonomous `live_tick()` transaction.
 7. After that life tick completes, schedule the normal steady-state cadence.
 
 If opening fails and there is no confirmed snapshot, autonomous lifecycle scheduling must not begin.
 
+If the user requested close while opening was still in flight, completion of that open operation must not schedule a wake timer.
+
 ## Steady autonomous cadence
 
-After every completed life-tick attempt, draw a new independent steady delay in the range 6 to 14 minutes, weighted toward the middle.
+After every completed life-tick attempt, draw a new independent steady delay from a triangular distribution bounded at 6 and 14 minutes with a 10-minute mode.
 
 The expected experience is irregular but bounded. Moss may live again after, for example, roughly 7 minutes, then 11 minutes, then 9 minutes. The user should not perceive a fixed metronome.
 
@@ -142,8 +143,9 @@ The scheduler must guarantee all of the following:
 - A timer expiry clears or consumes its pending schedule before attempting to start a tick.
 - If the bridge is already busy or closing, no second tick is queued.
 - No missed interval is replayed later.
-- No burst of catch-up ticks occurs after application stalls, model latency, sleep/resume, or close/reopen.
+- No burst of catch-up ticks occurs after application stalls, model latency, operating-system suspend/resume, or close/reopen.
 - The next steady interval is scheduled only after the current tick attempt has completed.
+- Completion of any worker operation while closing never schedules new lifecycle work.
 
 ## Manual interaction: Check in
 
@@ -179,7 +181,7 @@ If an autonomous or manual tick fails before a new state can be successfully per
 - Keep displaying the last confirmed snapshot.
 - Surface the existing error state to the UI.
 - Do not perform an immediate automatic retry.
-- Schedule the next attempt using a normal fresh steady 6-to-14-minute delay.
+- Schedule the next attempt using a normal fresh steady 6-to-14-minute delay, unless the session is closing.
 
 This avoids retry storms against the filesystem, Git, or local model.
 
@@ -197,11 +199,11 @@ Closing the habitat ends autonomous life for that session.
 
 On close request:
 
-1. Stop and invalidate the pending lifecycle timer immediately.
+1. Stop and invalidate the pending lifecycle timer immediately, if one exists.
 2. Set the bridge closing state as today.
 3. If no worker transaction is running, allow the application to close.
-4. If a tick is already in flight, allow that single transaction to finish using the existing shutdown contract, then close.
-5. Do not schedule another timer after a completion that occurred while closing.
+4. If an open or tick transaction is already in flight, allow that single transaction to finish using the existing shutdown contract, then close.
+5. Do not schedule a wake or steady timer after any completion that occurred while closing.
 
 The application must not leave a background timer, worker, service, daemon, or process alive after the window exits.
 
@@ -209,7 +211,7 @@ The application must not leave a background timer, worker, service, daemon, or p
 
 A new application launch starts a new interactive session.
 
-Moss loads the last successfully persisted state immediately, then draws a new 30-to-90-second wake delay.
+Moss loads the last successfully persisted state immediately, then draws a new uniform 30-to-90-second wake delay.
 
 The scheduler does not persist its pending deadline to `moss.state.json` and does not reconstruct missed life moments from the period when the application was closed.
 
@@ -259,10 +261,13 @@ Implementation must follow TDD and include deterministic lifecycle tests.
 Verify that:
 
 - Wake delays are never below 30 seconds or above 90 seconds.
+- The wake draw uses the configured uniform bounds.
 - Steady delays are never below 6 minutes or above 14 minutes.
-- The steady distribution has its mode near the center of the range.
+- The steady draw uses a triangular distribution with a 10-minute mode.
 - An injected deterministic/scripted random source produces reproducible delays.
 - The cadence module has no Qt, QML, Git, model, persistence, or filesystem side effects.
+
+Tests should prefer verifying the configured bounds/mode and scripted draws over fragile statistical assertions about a finite sample.
 
 ### Bridge/session tests
 
@@ -270,6 +275,7 @@ Verify that:
 
 - Successful open loads state but does not itself run a life tick.
 - Successful open schedules exactly one wake timer.
+- Close requested during opening prevents wake scheduling after the open worker finishes.
 - The first autonomous timer produces exactly one tick.
 - A completed tick schedules exactly one new steady timer.
 - Manual Check in cancels the pending timer, starts one immediate tick, and resets the steady schedule after completion.
@@ -293,7 +299,7 @@ Native Windows visual/runtime validation must confirm that autonomous ticks upda
 - autonomous timer fails to schedule or is unexpectedly inactive;
 - timer fires while a worker is already active;
 - duplicate/overlapping tick prevention;
-- close while an autonomous tick is in flight;
+- close while open or autonomous tick is in flight;
 - model latency longer than the scheduled interval;
 - local-model fallback versus hard transaction failure;
 - state-save failure during an autonomous tick;
@@ -341,7 +347,7 @@ MOSS-LIFECYCLE-01 is complete when all of the following are demonstrated:
 
 - Opening Moss shows the persisted state immediately without performing a tick.
 - Without any user interaction, Moss performs his first autonomous life tick within the configured 30-to-90-second wake window.
-- Subsequent autonomous life moments are scheduled independently in the bounded 6-to-14-minute center-weighted cadence.
+- Subsequent autonomous life moments are scheduled independently in the bounded 6-to-14-minute triangular cadence with a 10-minute mode.
 - A user can request an immediate Check in, after which the autonomous cadence restarts cleanly.
 - Autonomous and manual triggers can never overlap or queue surprise ticks.
 - Hard tick failures preserve the last confirmed state and resume only on a normal later cadence.

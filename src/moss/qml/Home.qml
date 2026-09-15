@@ -51,15 +51,52 @@ ApplicationWindow {
         required property string caption
         required property real level
         required property bool known
+        required property color accent
+        required property color accentDeep
         spacing: 8
         RowLayout {
             Layout.fillWidth: true
-            Small { text: meter.caption; Layout.fillWidth: true }
-            Small { text: meter.known ? Math.round(meter.level * 100) + "%" : "—"; color: "#c0c6ac" }
+            Small {
+                text: meter.caption.toUpperCase(); Layout.fillWidth: true
+                font.pixelSize: 10; font.letterSpacing: 1.15; color: "#aab49a"
+            }
+            Small {
+                text: meter.known ? Math.round(meter.level * 100) + "%" : "—"
+                font.pixelSize: 11; font.weight: Font.Medium
+                color: meter.known ? meter.accent : "#778174"
+            }
         }
         Rectangle {
-            Layout.fillWidth: true; height: 3; color: "#2c3b2d"
-            Rectangle { width: parent.width * meter.level; height: 3; color: "#a2ae7a"; visible: meter.known }
+            id: meterRail; objectName: "meterRail"
+            Layout.fillWidth: true; Layout.preferredHeight: 10
+            radius: height / 2
+            color: "#142219"
+            border.width: 1; border.color: "#334331"
+            Rectangle {
+                id: meterFill; objectName: "meterFill"
+                x: 1; y: 1
+                width: meter.known ? (parent.width - 2) * Math.max(0, Math.min(1, meter.level)) : 0
+                height: parent.height - 2
+                radius: height / 2
+                visible: meter.known
+                gradient: Gradient {
+                    GradientStop { position: 0; color: meter.accent }
+                    GradientStop { position: 1; color: meter.accentDeep }
+                }
+                Rectangle {
+                    objectName: "meterHighlight"
+                    x: 2; y: 1
+                    width: Math.max(0, parent.width - 4); height: 2
+                    radius: 1; color: "#eef0d7"; opacity: 0.18
+                    visible: parent.width > 6
+                }
+            }
+            Rectangle {
+                anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                anchors.leftMargin: 2; anchors.rightMargin: 2
+                height: 2; radius: 1
+                color: "#0c1610"; opacity: 0.28
+            }
         }
     }
 
@@ -151,8 +188,18 @@ ApplicationWindow {
                         objectName: "vitals"
                         Layout.fillWidth: true; Layout.topMargin: 15
                         Layout.leftMargin: 14; Layout.rightMargin: 14; spacing: 30
-                        Meter { Layout.fillWidth: true; caption: "Hunger"; level: bridge.hunger; known: bridge.ready }
-                        Meter { Layout.fillWidth: true; caption: "Energy"; level: bridge.energy; known: bridge.ready }
+                        Meter {
+                            id: hungerMeter; objectName: "hungerMeter"
+                            Layout.fillWidth: true
+                            caption: "Hunger"; level: bridge.hunger; known: bridge.ready
+                            accent: "#aeb06c"; accentDeep: "#666a42"
+                        }
+                        Meter {
+                            id: energyMeter; objectName: "energyMeter"
+                            Layout.fillWidth: true
+                            caption: "Energy"; level: bridge.energy; known: bridge.ready
+                            accent: "#8eae77"; accentDeep: "#4d7654"
+                        }
                     }
                 }
 

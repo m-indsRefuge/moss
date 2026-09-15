@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 
 ApplicationWindow {
     id: home
@@ -62,6 +63,27 @@ ApplicationWindow {
         }
     }
 
+    // One still wash carries the habitat's light into the surrounding surface.
+    Shape {
+        anchors.fill: parent; preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+            strokeWidth: 0
+            fillGradient: RadialGradient {
+                centerX: home.width * 0.28; centerY: home.height * 0.35
+                focalX: centerX; focalY: centerY
+                centerRadius: Math.max(home.width, home.height) * 0.76
+                GradientStop { position: 0; color: "#126d8058" }
+                GradientStop { position: 0.6; color: "#065d7050" }
+                GradientStop { position: 1; color: "#005d7050" }
+            }
+            startX: 0; startY: 0
+            PathLine { x: home.width; y: 0 }
+            PathLine { x: home.width; y: home.height }
+            PathLine { x: 0; y: home.height }
+            PathLine { x: 0; y: 0 }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent; anchors.margins: home.pageMargin
         spacing: 22
@@ -80,7 +102,7 @@ ApplicationWindow {
                 Layout.fillWidth: true; spacing: 5
                 Small { Layout.fillWidth: true; text: bridge.repoName; horizontalAlignment: Text.AlignRight; color: "#c4cbb3"; elide: Text.ElideRight; wrapMode: Text.NoWrap }
                 Small {
-                    Layout.fillWidth: true; text: bridge.repoPath; font.pixelSize: 10
+                    Layout.fillWidth: true; text: bridge.repoPath; font.pixelSize: 10; color: "#87947e"
                     horizontalAlignment: Text.AlignRight; elide: Text.ElideMiddle; wrapMode: Text.NoWrap
                     ToolTip.visible: repoHover.hovered; ToolTip.text: bridge.repoPath
                     HoverHandler { id: repoHover }
@@ -128,7 +150,7 @@ ApplicationWindow {
                     RowLayout {
                         objectName: "vitals"
                         Layout.fillWidth: true; Layout.topMargin: 15
-                        Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 30
+                        Layout.leftMargin: 14; Layout.rightMargin: 14; spacing: 30
                         Meter { Layout.fillWidth: true; caption: "Hunger"; level: bridge.hunger; known: bridge.ready }
                         Meter { Layout.fillWidth: true; caption: "Energy"; level: bridge.energy; known: bridge.ready }
                     }
@@ -141,8 +163,24 @@ ApplicationWindow {
                     width: home.wide ? regions.width - x : regions.width
                     height: home.wide ? regions.height : 400
 
-                    Rectangle { anchors.fill: parent; color: "#19251d"; radius: 3 }
-                    Rectangle { x: 0; y: 28; width: 1; height: parent.height - 56; color: "#3c4533" }
+                    // The record shares the enclosure's light and recedes at its foot.
+                    Rectangle {
+                        anchors.fill: parent; radius: 3
+                        gradient: Gradient {
+                            GradientStop { position: 0; color: "#b31e2c21" }
+                            GradientStop { position: 0.55; color: "#661b291f" }
+                            GradientStop { position: 1; color: "#0019251d" }
+                        }
+                    }
+                    Rectangle {
+                        x: 0; y: 28; width: 1; height: parent.height - 56
+                        gradient: Gradient {
+                            GradientStop { position: 0; color: "#003c4533" }
+                            GradientStop { position: 0.12; color: "#804b563c" }
+                            GradientStop { position: 0.65; color: "#403c4533" }
+                            GradientStop { position: 1; color: "#003c4533" }
+                        }
+                    }
                     ScrollView {
                         id: journalScroll; objectName: "journalScroll"
                         anchors.fill: parent; anchors.margins: 24

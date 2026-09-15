@@ -87,12 +87,23 @@ Item {
         preferredRendererType: Shape.CurveRenderer
         transformOrigin: Item.Top
         ShapePath {
-            strokeWidth: 0; fillColor: leaf.tint
+            strokeWidth: 0
+            fillGradient: LinearGradient {
+                x1: 2; y1: 3; x2: 13; y2: 24
+                GradientStop { position: 0; color: Qt.lighter(leaf.tint, 1.06) }
+                GradientStop { position: 0.45; color: leaf.tint }
+                GradientStop { position: 1; color: Qt.darker(leaf.tint, 1.2) }
+            }
             startX: 8; startY: 0
             PathCubic { x: 15; y: 13; control1X: 13; control1Y: 2; control2X: 17; control2Y: 6 }
             PathCubic { x: 7; y: 26; control1X: 15; control1Y: 19; control2X: 10; control2Y: 23 }
             PathCubic { x: 1; y: 12; control1X: 1; control1Y: 23; control2X: -1; control2Y: 18 }
             PathCubic { x: 8; y: 0; control1X: 0; control1Y: 6; control2X: 4; control2Y: 2 }
+        }
+        ShapePath {
+            strokeColor: Qt.darker(leaf.tint, 1.13); strokeWidth: 0.45; fillColor: "transparent"
+            startX: 8; startY: 4
+            PathQuad { x: 7; y: 22; controlX: 10; controlY: 13 }
         }
     }
     component Foliage: Item {
@@ -124,9 +135,19 @@ Item {
         }
     }
 
-    Rectangle {
-        x: 69; y: 185; width: 100; height: 12; radius: 50
-        color: "#09130e"; opacity: 0.48 - creature.hop * 0.017
+    // Two quiet ellipses soften the contact without a blur or texture layer.
+    Shape {
+        width: creature.width; height: creature.height
+        preferredRendererType: Shape.CurveRenderer
+        opacity: 1 - creature.hop * 0.034
+        ShapePath {
+            strokeWidth: 0; fillColor: "#2b09130e"
+            PathAngleArc { centerX: 119; centerY: 191; radiusX: 54; radiusY: 8; startAngle: 0; sweepAngle: 360 }
+        }
+        ShapePath {
+            strokeWidth: 0; fillColor: "#5c09130e"
+            PathAngleArc { centerX: 119; centerY: 190; radiusX: 44; radiusY: 4.5; startAngle: 0; sweepAngle: 360 }
+        }
     }
     Item {
         id: sprite
@@ -218,7 +239,7 @@ Item {
                         x1: 25; y1: 8; x2: 77; y2: 83
                         GradientStop { position: 0; color: "#bbc68d" }
                         GradientStop { position: 0.52; color: "#a7b87d" }
-                        GradientStop { position: 1; color: "#829860" }
+                        GradientStop { position: 1; color: "#7f925e" }
                     }
                     startX: 46; startY: 3
                     PathCubic { x: 94; y: 26; control1X: 69; control1Y: -3; control2X: 86; control2Y: 8 }

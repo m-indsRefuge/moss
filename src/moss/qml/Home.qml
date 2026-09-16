@@ -384,7 +384,7 @@ ApplicationWindow {
                 }
                 Button {
                     objectName: "tickButton"; Layout.preferredWidth: 120; Layout.preferredHeight: 42
-                    text: bridge.busy ? "Working…" : bridge.ready ? "Live a tick" : "Open home"
+                    text: bridge.busy ? "Working…" : bridge.ready ? "Check in" : "Open home"
                     font.pixelSize: 13
                     enabled: !bridge.busy && !bridge.closing
                     onClicked: bridge.ready ? bridge.requestTick() : bridge.open()

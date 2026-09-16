@@ -132,15 +132,18 @@ class MossBridge(QObject):
             return "Sensing Git and consulting the brain…" if self._is_tick else "Opening Moss’s home…"
         if self._error:
             return "Showing the last confirmed state." if self.ready else "Moss could not be opened."
-        return "Ready when you are. Ticks happen only when you ask." if self.ready else "Moss has not loaded."
+        return "Moss is awake and watching the repository." if self.ready else "Moss has not loaded."
 
     @Slot()
     def open(self):
-        self._start(False)
+        if not self.busy and not self._closing:
+            self._life_timer.stop()
+            self._start(False)
 
     @Slot()
     def requestTick(self):
-        if self.ready:
+        if self.ready and not self.busy and not self._closing:
+            self._life_timer.stop()
             self._start(True)
 
     def _schedule_wake(self):
@@ -197,6 +200,7 @@ class MossBridge(QObject):
     def finish_shutdown(self):
         # Defensive cleanup if the event loop exits outside the window-close
         # path. Normal close stays in the event loop until finished arrives.
+        self._life_timer.stop()
         if self._job is not None:
             self._job.wait()
 

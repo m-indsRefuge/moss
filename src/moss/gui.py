@@ -9,6 +9,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 
+from moss.lifecycle import LifecycleCadence
 from moss.runtime import MossRuntime, MossSnapshot
 
 
@@ -78,14 +79,18 @@ class MossBridge(QObject):
         # Detached newest-first presentation; QML cannot edit the snapshot.
         return list(reversed(self._snapshot.diary)) if self._snapshot else []
 
-    def __init__(self, runtime: MossRuntime):
+    def __init__(self, runtime: MossRuntime, *, cadence=None):
         super().__init__()
         self._runtime = runtime
+        self._cadence = cadence if cadence is not None else LifecycleCadence()
         self._snapshot: MossSnapshot | None = None
         self._job: _Operation | None = None
         self._is_tick = False
         self._closing = False
         self._error = ""
+        self._life_timer = QTimer(self)
+        self._life_timer.setSingleShot(True)
+        self._life_timer.timeout.connect(self._autonomous_tick)
 
     @Property(str, constant=True)
     def repoPath(self):
@@ -127,15 +132,31 @@ class MossBridge(QObject):
             return "Sensing Git and consulting the brain…" if self._is_tick else "Opening Moss’s home…"
         if self._error:
             return "Showing the last confirmed state." if self.ready else "Moss could not be opened."
-        return "Ready when you are. Ticks happen only when you ask." if self.ready else "Moss has not loaded."
+        return "Moss is awake and watching the repository." if self.ready else "Moss has not loaded."
 
     @Slot()
     def open(self):
-        self._start(False)
+        if not self.busy and not self._closing:
+            self._life_timer.stop()
+            self._start(False)
 
     @Slot()
     def requestTick(self):
-        if self.ready:
+        if self.ready and not self.busy and not self._closing:
+            self._life_timer.stop()
+            self._start(True)
+
+    def _schedule_wake(self):
+        if self.ready and not self.busy and not self._closing:
+            self._life_timer.start(self._cadence.wake_delay_ms())
+
+    def _schedule_steady(self):
+        if self.ready and not self.busy and not self._closing:
+            self._life_timer.start(self._cadence.steady_delay_ms())
+
+    @Slot()
+    def _autonomous_tick(self):
+        if self.ready and not self.busy and not self._closing:
             self._start(True)
 
     def _start(self, is_tick):
@@ -151,20 +172,26 @@ class MossBridge(QObject):
     @Slot()
     def _completed(self):
         job = self._job
+        was_tick = self._is_tick
         self._error = job.error
         if job.snapshot is not None:
             self._snapshot = job.snapshot
             self.stateChanged.emit()
-            if self._is_tick:
+            if was_tick:
                 self.tickCompleted.emit(animation_state(job.snapshot.action))
         self._job = None
         job.deleteLater()
         self.activityChanged.emit()
         if self._closing:
             self.closeReady.emit()
+        elif was_tick:
+            self._schedule_steady()
+        elif self.ready:
+            self._schedule_wake()
 
     @Slot()
     def requestClose(self):
+        self._life_timer.stop()
         self._closing = True
         self.activityChanged.emit()
         if not self.busy:
@@ -173,6 +200,7 @@ class MossBridge(QObject):
     def finish_shutdown(self):
         # Defensive cleanup if the event loop exits outside the window-close
         # path. Normal close stays in the event loop until finished arrives.
+        self._life_timer.stop()
         if self._job is not None:
             self._job.wait()
 

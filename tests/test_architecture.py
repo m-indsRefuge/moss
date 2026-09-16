@@ -9,6 +9,7 @@
 from pathlib import Path
 
 SRC = Path(__file__).parent.parent / "src" / "moss"
+QML = SRC / "qml"
 
 TIME_BANNED = ("datetime.now(", "datetime.utcnow(", "time.time(", "time.monotonic(")
 
@@ -45,3 +46,26 @@ def test_each_io_mechanism_has_exactly_one_owner():
             if mechanism in text:
                 offenders.append(f"{f.name} uses {mechanism!r} (owned by {owners})")
     assert not offenders, f"Monopoly violations: {offenders}"
+
+
+def test_qml_does_not_own_lifecycle_timers():
+    allowed_visual_timer = (
+        'Timer { id: settle; interval: 4200; '
+        'onTriggered: creature.state = "idle" }'
+    )
+    offenders = []
+
+    for f in sorted(QML.glob("*.qml")):
+        text = f.read_text(encoding="utf-8")
+        timers = [
+            line.strip()
+            for line in text.splitlines()
+            if "Timer {" in line
+        ]
+
+        for timer in timers:
+            if f.name == "Creature.qml" and timer == allowed_visual_timer:
+                continue
+            offenders.append(f"{f.name}: {timer}")
+
+    assert not offenders, f"Unapproved QML Timer found: {offenders}"

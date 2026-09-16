@@ -63,7 +63,8 @@ def test_worker_keeps_event_loop_live_rejects_overlap_and_defers_close(app, tmp_
             raise RuntimeError("unavailable")
     runtime = MossRuntime(tmp_path, clock=SimClock(), senses=FixtureSenses([]),
                           brain=LLMBrain(SlowTransport()))
-    bridge = MossBridge(runtime)
+    cadence = ScriptedCadence(wake_ms=10_000, steady_ms=10_000)
+    bridge = MossBridge(runtime, cadence=cadence)
     changes, actions, closed = QSignalSpy(bridge.stateChanged), QSignalSpy(bridge.tickCompleted), QSignalSpy(bridge.closeReady)
     observed_disk = []
     bridge.stateChanged.connect(lambda: observed_disk.append(load(runtime.state_path)))
@@ -83,11 +84,13 @@ def test_worker_keeps_event_loop_live_rejects_overlap_and_defers_close(app, tmp_
         until(lambda: bool(heartbeat))
         bridge.requestClose()
         assert bridge.closing and closed.count() == 0
+        assert not bridge._life_timer.isActive()
     finally:
         release.set()
         until(lambda: not bridge.busy)
         bridge.finish_shutdown()
     assert closed.count() == 1 and changes.count() == 2 and actions.count() == 1
+    assert cadence.steady_calls == 0
     assert all(thread != get_ident() for thread in worker_threads)
     assert bridge.brainStatus == "Reflex fallback"
     assert bridge.hasTick and bridge.usedFallback and bridge.decisionAttempts == 2
@@ -202,6 +205,9 @@ def test_habitat_button_publishes_saved_outcome_and_disclosures_do_not_tick(app,
         bridge.open()
         until(lambda: not bridge.busy)
         assert not bridge.hasTick and not brain.calls
+        button = window.findChild(QQuickItem, "tickButton")
+        assert button.property("text") == "Check in"
+        assert bridge.activity == "Moss is awake and watching the repository."
         window.resize(540, 700)
         QTest.qWait(100)
         button = window.findChild(QQuickItem, "tickButton")
@@ -308,3 +314,120 @@ def test_desktop_reflows_and_keeps_history_and_tick_accessible(app, tmp_path):
         window.hide()
         engine.deleteLater()
         app.processEvents()
+
+
+class ScriptedCadence:
+    def __init__(self, *, wake_ms=10, steady_ms=10_000):
+        self.wake_ms = wake_ms
+        self.steady_ms = steady_ms
+        self.wake_calls = 0
+        self.steady_calls = 0
+
+    def wake_delay_ms(self):
+        self.wake_calls += 1
+        return self.wake_ms
+
+    def steady_delay_ms(self):
+        self.steady_calls += 1
+        return self.steady_ms
+
+
+def test_successful_open_schedules_one_wake_tick_then_one_steady_timer(app, tmp_path):
+    cadence = ScriptedCadence(wake_ms=20, steady_ms=10_000)
+    runtime = MossRuntime(
+        tmp_path,
+        clock=SimClock(),
+        senses=FixtureSenses([]),
+    )
+    bridge = MossBridge(runtime, cadence=cadence)
+    actions = QSignalSpy(bridge.tickCompleted)
+
+    bridge.open()
+    until(lambda: bridge.ready and not bridge.busy)
+
+    assert not bridge.hasTick
+    assert actions.count() == 0
+    assert cadence.wake_calls == 1
+    assert cadence.steady_calls == 0
+
+    until(lambda: actions.count() == 1)
+
+    assert bridge.hasTick
+    assert cadence.steady_calls == 1
+    assert bridge._life_timer.isActive()
+
+    bridge.requestClose()
+    assert not bridge._life_timer.isActive()
+    bridge.finish_shutdown()
+
+
+
+def test_manual_check_in_cancels_pending_wake_and_resets_steady_schedule(app, tmp_path):
+    cadence = ScriptedCadence(wake_ms=10_000, steady_ms=10_000)
+    bridge = MossBridge(
+        MossRuntime(
+            tmp_path,
+            clock=SimClock(),
+            senses=FixtureSenses([]),
+        ),
+        cadence=cadence,
+    )
+    actions = QSignalSpy(bridge.tickCompleted)
+
+    bridge.open()
+    until(lambda: bridge.ready and not bridge.busy)
+
+    assert bridge._life_timer.isActive()
+    assert cadence.wake_calls == 1
+
+    bridge.requestTick()
+
+    # Manual Check in invalidates the pending autonomous wake immediately.
+    assert not bridge._life_timer.isActive()
+
+    until(lambda: actions.count() == 1 and not bridge.busy)
+
+    assert cadence.steady_calls == 1
+    assert bridge._life_timer.isActive()
+
+    bridge.requestClose()
+    assert not bridge._life_timer.isActive()
+    bridge.finish_shutdown()
+
+
+def test_failed_autonomous_tick_preserves_snapshot_and_reschedules_normally(
+    app, tmp_path, monkeypatch
+):
+    cadence = ScriptedCadence(wake_ms=10_000, steady_ms=10_000)
+    runtime = MossRuntime(
+        tmp_path,
+        clock=SimClock(),
+        senses=FixtureSenses([]),
+    )
+    bridge = MossBridge(runtime, cadence=cadence)
+
+    bridge.open()
+    until(lambda: bridge.ready and not bridge.busy)
+
+    confirmed = bridge._snapshot
+    before = runtime.state_path.read_bytes()
+
+    def failed_save(*args):
+        raise OSError("blocked")
+
+    monkeypatch.setattr("moss.runtime.save", failed_save)
+
+    bridge.requestTick()
+    until(lambda: not bridge.busy)
+
+    assert bridge.error
+    assert bridge._snapshot is confirmed
+    assert runtime.state_path.read_bytes() == before
+
+    # Hard failure does not rapid-retry. It returns to the normal cadence.
+    assert cadence.steady_calls == 1
+    assert bridge._life_timer.isActive()
+
+    bridge.requestClose()
+    assert not bridge._life_timer.isActive()
+    bridge.finish_shutdown()

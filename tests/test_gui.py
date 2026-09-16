@@ -308,3 +308,48 @@ def test_desktop_reflows_and_keeps_history_and_tick_accessible(app, tmp_path):
         window.hide()
         engine.deleteLater()
         app.processEvents()
+
+
+class ScriptedCadence:
+    def __init__(self, *, wake_ms=10, steady_ms=10_000):
+        self.wake_ms = wake_ms
+        self.steady_ms = steady_ms
+        self.wake_calls = 0
+        self.steady_calls = 0
+
+    def wake_delay_ms(self):
+        self.wake_calls += 1
+        return self.wake_ms
+
+    def steady_delay_ms(self):
+        self.steady_calls += 1
+        return self.steady_ms
+
+
+def test_successful_open_schedules_one_wake_tick_then_one_steady_timer(app, tmp_path):
+    cadence = ScriptedCadence(wake_ms=20, steady_ms=10_000)
+    runtime = MossRuntime(
+        tmp_path,
+        clock=SimClock(),
+        senses=FixtureSenses([]),
+    )
+    bridge = MossBridge(runtime, cadence=cadence)
+    actions = QSignalSpy(bridge.tickCompleted)
+
+    bridge.open()
+    until(lambda: bridge.ready and not bridge.busy)
+
+    assert not bridge.hasTick
+    assert actions.count() == 0
+    assert cadence.wake_calls == 1
+    assert cadence.steady_calls == 0
+
+    until(lambda: actions.count() == 1)
+
+    assert bridge.hasTick
+    assert cadence.steady_calls == 1
+    assert bridge._life_timer.isActive()
+
+    bridge.requestClose()
+    assert not bridge._life_timer.isActive()
+    bridge.finish_shutdown()
